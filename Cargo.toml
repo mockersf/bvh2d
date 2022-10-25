@@ -9,4 +9,4 @@ documentation = "https://docs.rs/crate/bvh2d"
 license = "MIT"
 
 [dependencies]
-glam = "0.21"
+glam = "0.22"
