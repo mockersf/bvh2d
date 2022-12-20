@@ -91,7 +91,7 @@ impl BVH2dNode {
     }
 
     fn build<T: Bounded + Send + Sync>(
-        shapes: &mut [T],
+        shapes: &[T],
         indices: &mut [usize],
         nodes: &mut [MaybeUninit<BVH2dNode>],
         node_index: usize,
@@ -158,10 +158,10 @@ impl BVH2dNode {
                 #[cfg(feature = "rayon")]
                 {
                     let (shapes_a, shapes_b) = unsafe {
-                        let ptr = shapes.as_mut_ptr();
+                        let ptr = shapes.as_ptr();
                         let len = shapes.len();
-                        let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
-                        let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                        let shapes_a = std::slice::from_raw_parts(ptr, len);
+                        let shapes_b = std::slice::from_raw_parts(ptr, len);
                         (shapes_a, shapes_b)
                     };
 
@@ -280,10 +280,10 @@ impl BVH2dNode {
                 #[cfg(feature = "rayon")]
                 {
                     let (shapes_a, shapes_b) = unsafe {
-                        let ptr = shapes.as_mut_ptr();
+                        let ptr = shapes.as_ptr();
                         let len = shapes.len();
-                        let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
-                        let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                        let shapes_a = std::slice::from_raw_parts(ptr, len);
+                        let shapes_b = std::slice::from_raw_parts(ptr, len);
                         (shapes_a, shapes_b)
                     };
 
@@ -336,7 +336,7 @@ pub struct BVH2d {
 }
 
 impl BVH2d {
-    pub fn build<Shape: Bounded + Send + Sync>(shapes: &mut [Shape]) -> BVH2d {
+    pub fn build<Shape: Bounded + Send + Sync>(shapes: &[Shape]) -> BVH2d {
         if shapes.is_empty() {
             return BVH2d { nodes: Vec::new() };
         }
