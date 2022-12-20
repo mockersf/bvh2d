@@ -9,4 +9,9 @@ documentation = "https://docs.rs/crate/bvh2d"
 license = "MIT"
 
 [dependencies]
+bevy = { version = "0.9.1", default-features = false, features = [], optional = true }
 glam = "0.22"
+rayon = { version = "1.6.1", optional = true }
+
+[features]
+default = ["rayon"]

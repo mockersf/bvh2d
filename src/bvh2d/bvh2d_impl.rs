@@ -1,18 +1,21 @@
 use crate::aabb::{Bounded, AABB};
 use crate::bvh2d::iter::BVH2dTraverseIterator;
-use crate::utils::{concatenate_vectors, joint_aabb_of_shapes, Bucket};
+use crate::utils::{joint_aabb_of_shapes, Bucket};
 use crate::Point2;
 use crate::EPSILON;
 use std::f32;
+use std::mem::MaybeUninit;
 
 #[derive(Copy, Clone, Debug)]
 #[allow(clippy::upper_case_acronyms)]
 pub(crate) enum BVH2dNode {
     Leaf {
+        parent_index: usize,
         shape_index: usize,
     },
 
     Node {
+        parent_index: usize,
         child_l_index: usize,
         child_l_aabb: AABB,
         child_r_index: usize,
@@ -20,10 +23,80 @@ pub(crate) enum BVH2dNode {
     },
 }
 
-impl BVH2dNode {
-    const DUMMY: BVH2dNode = { BVH2dNode::Leaf { shape_index: 0 } };
+impl PartialEq for BVH2dNode {
+    // TODO Consider also comparing AABBs
+    fn eq(&self, other: &BVH2dNode) -> bool {
+        match (self, other) {
+            (
+                &BVH2dNode::Node {
+                    parent_index: self_parent_index,
+                    child_l_index: self_child_l_index,
+                    child_r_index: self_child_r_index,
+                    ..
+                },
+                &BVH2dNode::Node {
+                    parent_index: other_parent_index,
+                    child_l_index: other_child_l_index,
+                    child_r_index: other_child_r_index,
+                    ..
+                },
+            ) => {
+                self_parent_index == other_parent_index
+                    && self_child_l_index == other_child_l_index
+                    && self_child_r_index == other_child_r_index
+            }
+            (
+                &BVH2dNode::Leaf {
+                    parent_index: self_parent_index,
+                    shape_index: self_shape_index,
+                },
+                &BVH2dNode::Leaf {
+                    parent_index: other_parent_index,
+                    shape_index: other_shape_index,
+                },
+            ) => self_parent_index == other_parent_index && self_shape_index == other_shape_index,
+            _ => false,
+        }
+    }
+}
 
-    fn build<T: Bounded>(shapes: &[T], indices: &[usize], nodes: &mut Vec<BVH2dNode>) -> usize {
+impl BVH2dNode {
+    /// Returns the index of the shape contained within the node if is a leaf,
+    /// or `None` if it is an interior node.
+    #[allow(unused)]
+    pub fn shape_index(&self) -> Option<usize> {
+        match *self {
+            BVH2dNode::Leaf { shape_index, .. } => Some(shape_index),
+            _ => None,
+        }
+    }
+
+    /// Returns the index of the parent node.
+    pub fn parent(&self) -> usize {
+        match *self {
+            BVH2dNode::Node { parent_index, .. } | BVH2dNode::Leaf { parent_index, .. } => {
+                parent_index
+            }
+        }
+    }
+
+    /// Returns the depth of the node. The root node has depth `0`.
+    pub fn depth(&self, nodes: &[BVH2dNode]) -> u32 {
+        let parent_i = self.parent();
+        if parent_i == 0 && nodes[parent_i].eq(self) {
+            0
+        } else {
+            1 + nodes[parent_i].depth(nodes)
+        }
+    }
+
+    fn build<T: Bounded + Send + Sync>(
+        shapes: &mut [T],
+        indices: &mut [usize],
+        nodes: &mut [MaybeUninit<BVH2dNode>],
+        node_index: usize,
+        parent_index: usize,
+    ) {
         // Helper function to accumulate the AABB joint and the centroids AABB
         #[inline]
         fn grow_convex_hull(convex_hull: (AABB, AABB), shape_aabb: &AABB) -> (AABB, AABB) {
@@ -39,22 +112,24 @@ impl BVH2dNode {
         // If there is only one element left, don't split anymore
         if indices.len() == 1 {
             let shape_index = indices[0];
-            let node_index = nodes.len();
-            nodes.push(BVH2dNode::Leaf { shape_index });
+            nodes[0].write(BVH2dNode::Leaf {
+                parent_index,
+                shape_index,
+            });
             // Let the shape know the index of the node that represents it.
-            return node_index;
+            return;
+        }
+
+        let mut parallel_recurse = false;
+        if indices.len() > 64 {
+            parallel_recurse = true;
         }
 
         let mut convex_hull = (AABB::EMPTY, AABB::EMPTY);
-        for index in indices {
+        for index in indices.iter() {
             convex_hull = grow_convex_hull(convex_hull, &shapes[*index].aabb());
         }
         let (aabb_bounds, centroid_bounds) = convex_hull;
-
-        // From here on we handle the recursive case. This dummy is required, because the children
-        // must know their parent, and it's easier to update one parent node than the child nodes.
-        let node_index = nodes.len();
-        nodes.push(BVH2dNode::DUMMY);
 
         // Find the axis along which the shapes are spread the most.
         let split_axis = centroid_bounds.largest_axis();
@@ -66,13 +141,54 @@ impl BVH2dNode {
         {
             // In this branch the shapes lie too close together so that splitting them in a
             // sensible way is not possible. Instead we just split the list of shapes in half.
-            let (child_l_indices, child_r_indices) = indices.split_at(indices.len() / 2);
+            let (child_l_indices, child_r_indices) = indices.split_at_mut(indices.len() / 2);
             let child_l_aabb = joint_aabb_of_shapes(child_l_indices, shapes);
             let child_r_aabb = joint_aabb_of_shapes(child_r_indices, shapes);
 
+            let next_nodes = &mut nodes[1..];
+            let (l_nodes, r_nodes) = next_nodes.split_at_mut(child_l_indices.len() * 2 - 1);
+            let child_l_index = node_index + 1;
+            let child_r_index = node_index + 1 + l_nodes.len();
+
             // Proceed recursively.
-            let child_l_index = BVH2dNode::build(shapes, child_l_indices, nodes);
-            let child_r_index = BVH2dNode::build(shapes, child_r_indices, nodes);
+            if parallel_recurse {
+                let (shapes_a, shapes_b) = unsafe {
+                    let ptr = shapes.as_mut_ptr();
+                    let len = shapes.len();
+                    let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
+                    let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                    (shapes_a, shapes_b)
+                };
+
+                #[cfg(all(feature="rayon", not(feature="bevy")))]
+                rayon::join(
+                    || {
+                        BVH2dNode::build(
+                            shapes_a,
+                            child_l_indices,
+                            l_nodes,
+                            child_l_index,
+                            node_index,
+                        )
+                    },
+                    || {
+                        BVH2dNode::build(
+                            shapes_b,
+                            child_r_indices,
+                            r_nodes,
+                            child_r_index,
+                            node_index,
+                        )
+                    },
+                );
+
+                #[cfg(all(feature="bevy", not(feature="rayon")))]
+                todo!()
+            } else {
+                BVH2dNode::build(shapes, child_l_indices, l_nodes, child_l_index, node_index);
+                BVH2dNode::build(shapes, child_r_indices, r_nodes, child_r_index, node_index);
+            }
+
             (child_l_index, child_l_aabb, child_r_index, child_r_aabb)
         } else {
             const NUM_BUCKETS: usize = 4;
@@ -87,7 +203,7 @@ impl BVH2dNode {
 
             // In this branch the `split_axis_size` is large enough to perform meaningful splits.
             // We start by assigning the shapes to `Bucket`s.
-            for idx in indices {
+            for idx in indices.iter() {
                 let shape = &shapes[*idx];
                 let shape_aabb = shape.aabb();
                 let shape_center = shape_aabb.center();
@@ -127,26 +243,88 @@ impl BVH2dNode {
 
             // Join together all index buckets.
             let (l_assignments, r_assignments) = bucket_assignments.split_at_mut(min_bucket + 1);
-            let child_l_indices = concatenate_vectors(l_assignments);
-            let child_r_indices = concatenate_vectors(r_assignments);
+
+            let mut l_count = 0;
+            for group in l_assignments.iter() {
+                l_count += group.len();
+            }
+
+            let (child_l_indices, child_r_indices) = indices.split_at_mut(l_count);
+
+            let mut i = 0;
+            for group in l_assignments.iter() {
+                for x in group {
+                    child_l_indices[i] = *x;
+                    i += 1;
+                }
+            }
+            i = 0;
+            for group in r_assignments.iter() {
+                for x in group {
+                    child_r_indices[i] = *x;
+                    i += 1;
+                }
+            }
+
+            let next_nodes = &mut nodes[1..];
+            let (l_nodes, r_nodes) = next_nodes.split_at_mut(child_l_indices.len() * 2 - 1);
+
+            let child_l_index = node_index + 1;
+            let child_r_index = node_index + 1 + l_nodes.len();
 
             // Proceed recursively.
-            let child_l_index = BVH2dNode::build(shapes, &child_l_indices, nodes);
-            let child_r_index = BVH2dNode::build(shapes, &child_r_indices, nodes);
+            if parallel_recurse {
+                // parallel split
+                let (shapes_a, shapes_b) = unsafe {
+                    let ptr = shapes.as_mut_ptr();
+                    let len = shapes.len();
+                    let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
+                    let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                    (shapes_a, shapes_b)
+                };
+
+                #[cfg(all(feature="rayon", not(feature="bevy")))]
+                rayon::join(
+                    || {
+                        BVH2dNode::build(
+                            shapes_a,
+                            child_l_indices,
+                            l_nodes,
+                            child_l_index,
+                            node_index,
+                        )
+                    },
+                    || {
+                        BVH2dNode::build(
+                            shapes_b,
+                            child_r_indices,
+                            r_nodes,
+                            child_r_index,
+                            node_index,
+                        )
+                    },
+                );
+
+                #[cfg(all(feature="bevy", not(feature="rayon")))]
+                todo!()
+            } else {
+                BVH2dNode::build(shapes, child_l_indices, l_nodes, child_l_index, node_index);
+                BVH2dNode::build(shapes, child_r_indices, r_nodes, child_r_index, node_index);
+            }
+
             (child_l_index, child_l_aabb, child_r_index, child_r_aabb)
         };
 
         // Construct the actual data structure and replace the dummy node.
         debug_assert!(!child_l_aabb.is_empty());
         debug_assert!(!child_r_aabb.is_empty());
-        nodes[node_index] = BVH2dNode::Node {
+        nodes[0].write(BVH2dNode::Node {
+            parent_index,
             child_l_aabb,
             child_l_index,
             child_r_aabb,
             child_r_index,
-        };
-
-        node_index
+        });
     }
 }
 
@@ -157,15 +335,258 @@ pub struct BVH2d {
 }
 
 impl BVH2d {
-    pub fn build<Shape: Bounded>(shapes: &[Shape]) -> BVH2d {
-        let indices = (0..shapes.len()).collect::<Vec<usize>>();
-        let expected_node_count = shapes.len() * 2;
+    pub fn build<Shape: Bounded + Send + Sync>(shapes: &mut [Shape]) -> BVH2d {
+        if shapes.is_empty() {
+            return BVH2d { nodes: Vec::new() };
+        }
+
+        let mut indices = (0..shapes.len()).collect::<Vec<usize>>();
+        let expected_node_count = shapes.len() * 2 - 1;
         let mut nodes = Vec::with_capacity(expected_node_count);
-        BVH2dNode::build(shapes, &indices, &mut nodes);
+
+        let uninit_slice = unsafe {
+            std::slice::from_raw_parts_mut(
+                nodes.as_mut_ptr() as *mut MaybeUninit<BVH2dNode>,
+                expected_node_count,
+            )
+        };
+
+        BVH2dNode::build(shapes, &mut indices, uninit_slice, 0, 0);
+
+        unsafe {
+            nodes.set_len(expected_node_count);
+        }
+
         BVH2d { nodes }
     }
 
     pub fn contains_iterator<'a>(&'a self, point: &'a Point2) -> BVH2dTraverseIterator {
         BVH2dTraverseIterator::new(self, point)
+    }
+
+    // /// Prints the [`BVH`] in a tree-like visualization.
+    // ///
+    // /// [`BVH`]: struct.BVH.html
+    // ///
+    pub fn pretty_print(&self) {
+        self.print_node(0);
+    }
+
+    fn print_node(&self, node_index: usize) {
+        let nodes = &self.nodes;
+        match nodes[node_index] {
+            BVH2dNode::Node {
+                child_l_index,
+                child_r_index,
+                child_l_aabb,
+                child_r_aabb,
+                ..
+            } => {
+                let depth = nodes[node_index].depth(nodes);
+                let padding: String = " ".repeat(depth as usize);
+                println!(
+                    "{}node={} parent={}",
+                    padding,
+                    node_index,
+                    nodes[node_index].parent()
+                );
+                println!("{}{} child_l {}", padding, child_l_index, child_l_aabb);
+                self.print_node(child_l_index);
+                println!("{}{} child_r {}", padding, child_r_index, child_r_aabb);
+                self.print_node(child_r_index);
+            }
+            BVH2dNode::Leaf { shape_index, .. } => {
+                let depth = nodes[node_index].depth(nodes);
+                let padding: String = " ".repeat(depth as usize);
+                println!(
+                    "{}node={} parent={}",
+                    padding,
+                    node_index,
+                    nodes[node_index].parent()
+                );
+                println!("{}shape\t{:?}", padding, shape_index);
+            }
+        }
+    }
+
+    /// Verifies that the node at index `node_index` lies inside `expected_outer_aabb`,
+    /// its parent index is equal to `expected_parent_index`, its depth is equal to
+    /// `expected_depth`. Increares `node_count` by the number of visited nodes.
+    fn is_consistent_subtree<Shape: Bounded>(
+        &self,
+        node_index: usize,
+        expected_parent_index: usize,
+        expected_outer_aabb: &AABB,
+        expected_depth: u32,
+        node_count: &mut usize,
+        shapes: &[Shape],
+    ) -> bool {
+        *node_count += 1;
+        match self.nodes[node_index] {
+            BVH2dNode::Node {
+                parent_index,
+                child_l_index,
+                child_l_aabb,
+                child_r_index,
+                child_r_aabb,
+            } => {
+                let depth = self.nodes[node_index].depth(self.nodes.as_slice());
+                let correct_parent_index = expected_parent_index == parent_index;
+                let correct_depth = expected_depth == depth;
+                let left_aabb_in_parent =
+                    expected_outer_aabb.approx_contains_aabb_eps(&child_l_aabb, EPSILON);
+                let right_aabb_in_parent =
+                    expected_outer_aabb.approx_contains_aabb_eps(&child_r_aabb, EPSILON);
+                let left_subtree_consistent = self.is_consistent_subtree(
+                    child_l_index,
+                    node_index,
+                    &child_l_aabb,
+                    expected_depth + 1,
+                    node_count,
+                    shapes,
+                );
+                let right_subtree_consistent = self.is_consistent_subtree(
+                    child_r_index,
+                    node_index,
+                    &child_r_aabb,
+                    expected_depth + 1,
+                    node_count,
+                    shapes,
+                );
+
+                correct_parent_index
+                    && correct_depth
+                    && left_aabb_in_parent
+                    && right_aabb_in_parent
+                    && left_subtree_consistent
+                    && right_subtree_consistent
+            }
+            BVH2dNode::Leaf {
+                parent_index,
+                shape_index,
+            } => {
+                let depth = self.nodes[node_index].depth(self.nodes.as_slice());
+                let correct_parent_index = expected_parent_index == parent_index;
+                let correct_depth = expected_depth == depth;
+                let shape_aabb = shapes[shape_index].aabb();
+                let shape_aabb_in_parent =
+                    expected_outer_aabb.approx_contains_aabb_eps(&shape_aabb, EPSILON);
+
+                correct_parent_index && correct_depth && shape_aabb_in_parent
+            }
+        }
+    }
+
+    /// Checks if all children of a node have the correct parent index, and that there is no
+    /// detached subtree. Also checks if the `AABB` hierarchy is consistent.
+    pub fn is_consistent<Shape: Bounded + Send + Sync>(&self, shapes: &[Shape]) -> bool {
+        // The root node of the bvh is not bounded by anything.
+        let space = AABB {
+            min: Point2::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+            max: Point2::new(f32::INFINITY, f32::INFINITY),
+        };
+
+        // The counter for all nodes.
+        let mut node_count = 0;
+        let subtree_consistent =
+            self.is_consistent_subtree(0, 0, &space, 0, &mut node_count, shapes);
+
+        // Check if all nodes have been counted from the root node.
+        // If this is false, it means we have a detached subtree.
+        let is_connected = node_count == self.nodes.len();
+        subtree_consistent && is_connected
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        aabb::{Bounded, AABB},
+        bvh2d::BVH2dNode,
+        Point2, Vector2,
+    };
+
+    use super::BVH2d;
+
+    /// Define some `Bounded` structure.
+    #[derive(Debug, Clone, Copy)]
+    #[cfg_attr(feature = "serde_impls", derive(serde::Serialize, serde::Deserialize))]
+    pub struct UnitBox {
+        pub id: i32,
+        pub pos: Point2,
+        _node_index: usize,
+    }
+
+    impl UnitBox {
+        pub fn new(id: i32, pos: Point2) -> UnitBox {
+            UnitBox {
+                id,
+                pos,
+                _node_index: 0,
+            }
+        }
+    }
+
+    /// `UnitBox`'s `AABB`s are unit `AABB`s centered on the box's position.
+    impl Bounded for UnitBox {
+        fn aabb(&self) -> AABB {
+            let min = self.pos + Vector2::new(-0.5, -0.5);
+            let max = self.pos + Vector2::new(0.5, 0.5);
+            AABB::with_bounds(min, max)
+        }
+    }
+
+    /// Generate 21 `UnitBox`s along the X axis centered on whole numbers (-10,9,..,10).
+    /// The index is set to the rounded x-coordinate of the box center.
+    pub fn generate_aligned_boxes() -> Vec<UnitBox> {
+        // Create 21 boxes along the x-axis
+        let mut shapes = Vec::new();
+        for x in -10..11 {
+            shapes.push(UnitBox::new(x as i32, Point2::new(x as f32, 0.0)));
+        }
+        shapes
+    }
+
+    /// Creates a `BoundingHierarchy` for a fixed scene structure.
+    pub fn build_some_bh() -> (Vec<UnitBox>, BVH2d) {
+        let mut boxes = generate_aligned_boxes();
+        let bh = BVH2d::build(&mut boxes);
+        (boxes, bh)
+    }
+
+    #[test]
+    /// Tests whether the building procedure succeeds in not failing.
+    fn test_build_bvh() {
+        let (shapes, bvh) = build_some_bh();
+        bvh.pretty_print();
+        bvh.is_consistent(shapes.as_slice());
+    }
+
+    #[test]
+    /// Verify contents of the bounding hierarchy for a fixed scene structure
+    fn test_bvh_shape_indices() {
+        use std::collections::HashSet;
+
+        let (all_shapes, bh) = build_some_bh();
+
+        // It should find all shape indices.
+        let expected_shapes: HashSet<_> = (0..all_shapes.len()).collect();
+        let mut found_shapes = HashSet::new();
+
+        for node in bh.nodes.iter() {
+            match *node {
+                BVH2dNode::Node { .. } => {
+                    assert_eq!(node.shape_index(), None);
+                }
+                BVH2dNode::Leaf { .. } => {
+                    found_shapes.insert(
+                        node.shape_index()
+                            .expect("getting a shape index from a leaf node"),
+                    );
+                }
+            }
+        }
+
+        assert_eq!(expected_shapes, found_shapes);
     }
 }
