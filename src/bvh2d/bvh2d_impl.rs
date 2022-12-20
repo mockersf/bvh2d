@@ -546,8 +546,8 @@ mod tests {
 
     /// Creates a `BoundingHierarchy` for a fixed scene structure.
     pub fn build_some_bh() -> (Vec<UnitBox>, BVH2d) {
-        let mut boxes = generate_aligned_boxes();
-        let bh = BVH2d::build(&mut boxes);
+        let boxes = generate_aligned_boxes();
+        let bh = BVH2d::build(&boxes);
         (boxes, bh)
     }
 
