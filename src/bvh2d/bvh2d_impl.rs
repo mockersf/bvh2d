@@ -120,7 +120,9 @@ impl BVH2dNode {
             return;
         }
 
+        #[allow(unused_mut)]
         let mut parallel_recurse = false;
+        #[cfg(feature = "rayon")]
         if indices.len() > 64 {
             parallel_recurse = true;
         }
@@ -152,38 +154,38 @@ impl BVH2dNode {
 
             // Proceed recursively.
             if parallel_recurse {
-                let (shapes_a, shapes_b) = unsafe {
-                    let ptr = shapes.as_mut_ptr();
-                    let len = shapes.len();
-                    let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
-                    let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
-                    (shapes_a, shapes_b)
-                };
+                // parallel_recurse is only ever true when the rayon feature is enabled
+                #[cfg(feature = "rayon")]
+                {
+                    let (shapes_a, shapes_b) = unsafe {
+                        let ptr = shapes.as_mut_ptr();
+                        let len = shapes.len();
+                        let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
+                        let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                        (shapes_a, shapes_b)
+                    };
 
-                #[cfg(all(feature="rayon", not(feature="bevy")))]
-                rayon::join(
-                    || {
-                        BVH2dNode::build(
-                            shapes_a,
-                            child_l_indices,
-                            l_nodes,
-                            child_l_index,
-                            node_index,
-                        )
-                    },
-                    || {
-                        BVH2dNode::build(
-                            shapes_b,
-                            child_r_indices,
-                            r_nodes,
-                            child_r_index,
-                            node_index,
-                        )
-                    },
-                );
-
-                #[cfg(all(feature="bevy", not(feature="rayon")))]
-                todo!()
+                    rayon::join(
+                        || {
+                            BVH2dNode::build(
+                                shapes_a,
+                                child_l_indices,
+                                l_nodes,
+                                child_l_index,
+                                node_index,
+                            )
+                        },
+                        || {
+                            BVH2dNode::build(
+                                shapes_b,
+                                child_r_indices,
+                                r_nodes,
+                                child_r_index,
+                                node_index,
+                            )
+                        },
+                    );
+                }
             } else {
                 BVH2dNode::build(shapes, child_l_indices, l_nodes, child_l_index, node_index);
                 BVH2dNode::build(shapes, child_r_indices, r_nodes, child_r_index, node_index);
@@ -274,39 +276,38 @@ impl BVH2dNode {
 
             // Proceed recursively.
             if parallel_recurse {
-                // parallel split
-                let (shapes_a, shapes_b) = unsafe {
-                    let ptr = shapes.as_mut_ptr();
-                    let len = shapes.len();
-                    let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
-                    let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
-                    (shapes_a, shapes_b)
-                };
+                // parallel_recurse is only ever true when the rayon feature is enabled
+                #[cfg(feature = "rayon")]
+                {
+                    let (shapes_a, shapes_b) = unsafe {
+                        let ptr = shapes.as_mut_ptr();
+                        let len = shapes.len();
+                        let shapes_a = std::slice::from_raw_parts_mut(ptr, len);
+                        let shapes_b = std::slice::from_raw_parts_mut(ptr, len);
+                        (shapes_a, shapes_b)
+                    };
 
-                #[cfg(all(feature="rayon", not(feature="bevy")))]
-                rayon::join(
-                    || {
-                        BVH2dNode::build(
-                            shapes_a,
-                            child_l_indices,
-                            l_nodes,
-                            child_l_index,
-                            node_index,
-                        )
-                    },
-                    || {
-                        BVH2dNode::build(
-                            shapes_b,
-                            child_r_indices,
-                            r_nodes,
-                            child_r_index,
-                            node_index,
-                        )
-                    },
-                );
-
-                #[cfg(all(feature="bevy", not(feature="rayon")))]
-                todo!()
+                    rayon::join(
+                        || {
+                            BVH2dNode::build(
+                                shapes_a,
+                                child_l_indices,
+                                l_nodes,
+                                child_l_index,
+                                node_index,
+                            )
+                        },
+                        || {
+                            BVH2dNode::build(
+                                shapes_b,
+                                child_r_indices,
+                                r_nodes,
+                                child_r_index,
+                                node_index,
+                            )
+                        },
+                    );
+                }
             } else {
                 BVH2dNode::build(shapes, child_l_indices, l_nodes, child_l_index, node_index);
                 BVH2dNode::build(shapes, child_r_indices, r_nodes, child_r_index, node_index);
