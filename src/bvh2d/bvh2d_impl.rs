@@ -386,26 +386,22 @@ impl BVH2d {
                 let depth = nodes[node_index].depth(nodes);
                 let padding: String = " ".repeat(depth as usize);
                 println!(
-                    "{}node={} parent={}",
-                    padding,
-                    node_index,
+                    "{padding}node={node_index} parent={}",
                     nodes[node_index].parent()
                 );
-                println!("{}{} child_l {}", padding, child_l_index, child_l_aabb);
+                println!("{padding}{child_l_index} child_l {child_l_aabb}");
                 self.print_node(child_l_index);
-                println!("{}{} child_r {}", padding, child_r_index, child_r_aabb);
+                println!("{padding}{child_r_index} child_r {child_r_aabb}");
                 self.print_node(child_r_index);
             }
             BVH2dNode::Leaf { shape_index, .. } => {
                 let depth = nodes[node_index].depth(nodes);
                 let padding: String = " ".repeat(depth as usize);
                 println!(
-                    "{}node={} parent={}",
-                    padding,
-                    node_index,
+                    "{padding}node={node_index} parent={}",
                     nodes[node_index].parent()
                 );
-                println!("{}shape\t{:?}", padding, shape_index);
+                println!("{padding}shape\t{shape_index:?}");
             }
         }
     }
@@ -543,7 +539,7 @@ mod tests {
         // Create 21 boxes along the x-axis
         let mut shapes = Vec::new();
         for x in -10..11 {
-            shapes.push(UnitBox::new(x as i32, Point2::new(x as f32, 0.0)));
+            shapes.push(UnitBox::new(x, Point2::new(x as f32, 0.0)));
         }
         shapes
     }
