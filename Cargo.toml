@@ -10,3 +10,7 @@ license = "MIT"
 
 [dependencies]
 glam = "0.22"
+rayon = { version = "1.6.1", optional = true }
+
+[features]
+default = ["rayon"]

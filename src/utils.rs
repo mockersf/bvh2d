@@ -1,6 +1,7 @@
 use crate::aabb::{Bounded, AABB};
 
 #[inline]
+#[allow(unused)]
 pub fn concatenate_vectors<T: Sized>(vectors: &mut [Vec<T>]) -> Vec<T> {
     let mut result = Vec::with_capacity(vectors.iter().map(|v| v.len()).sum());
     for vector in vectors.iter_mut() {

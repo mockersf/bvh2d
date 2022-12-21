@@ -1,4 +1,5 @@
 use std::f32;
+use std::fmt::Display;
 
 use crate::{Point2, Vector2};
 
@@ -9,6 +10,12 @@ use crate::axis::Axis;
 pub struct AABB {
     pub min: Point2,
     pub max: Point2,
+}
+
+impl Display for AABB {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "min bound: {}; max bound: {}", self.min, self.max)
+    }
 }
 
 pub trait Bounded {
@@ -76,5 +83,17 @@ impl AABB {
         } else {
             Axis::Y
         }
+    }
+
+    pub(crate) fn approx_contains_eps(&self, p: &Point2, epsilon: f32) -> bool {
+        (p.x - self.min.x) > -epsilon
+            && (p.x - self.max.x) < epsilon
+            && (p.y - self.min.y) > -epsilon
+            && (p.y - self.max.y) < epsilon
+    }
+
+    pub fn approx_contains_aabb_eps(&self, other: &AABB, epsilon: f32) -> bool {
+        self.approx_contains_eps(&other.min, epsilon)
+            && self.approx_contains_eps(&other.max, epsilon)
     }
 }
