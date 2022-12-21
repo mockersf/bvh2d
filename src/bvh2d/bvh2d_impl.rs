@@ -157,31 +157,23 @@ impl BVH2dNode {
                 // parallel_recurse is only ever true when the rayon feature is enabled
                 #[cfg(feature = "rayon")]
                 {
-                    let (shapes_a, shapes_b) = unsafe {
-                        let ptr = shapes.as_ptr();
-                        let len = shapes.len();
-                        let shapes_a = std::slice::from_raw_parts(ptr, len);
-                        let shapes_b = std::slice::from_raw_parts(ptr, len);
-                        (shapes_a, shapes_b)
-                    };
-
                     rayon::join(
                         || {
                             BVH2dNode::build(
-                                shapes_a,
+                                shapes,
                                 child_l_indices,
                                 l_nodes,
-                                child_l_index,
-                                node_index,
+                                child_l_index, // The new node's index
+                                node_index,    // The parent index
                             )
                         },
                         || {
                             BVH2dNode::build(
-                                shapes_b,
+                                shapes,
                                 child_r_indices,
                                 r_nodes,
-                                child_r_index,
-                                node_index,
+                                child_r_index, // The new node's index
+                                node_index,    // The parent index
                             )
                         },
                     );
@@ -279,31 +271,23 @@ impl BVH2dNode {
                 // parallel_recurse is only ever true when the rayon feature is enabled
                 #[cfg(feature = "rayon")]
                 {
-                    let (shapes_a, shapes_b) = unsafe {
-                        let ptr = shapes.as_ptr();
-                        let len = shapes.len();
-                        let shapes_a = std::slice::from_raw_parts(ptr, len);
-                        let shapes_b = std::slice::from_raw_parts(ptr, len);
-                        (shapes_a, shapes_b)
-                    };
-
                     rayon::join(
                         || {
                             BVH2dNode::build(
-                                shapes_a,
+                                shapes,
                                 child_l_indices,
                                 l_nodes,
-                                child_l_index,
-                                node_index,
+                                child_l_index, // The new node's index
+                                node_index,    // The parent index
                             )
                         },
                         || {
                             BVH2dNode::build(
-                                shapes_b,
+                                shapes,
                                 child_r_indices,
                                 r_nodes,
-                                child_r_index,
-                                node_index,
+                                child_r_index, // The new node's index
+                                node_index,    // The parent index
                             )
                         },
                     );
