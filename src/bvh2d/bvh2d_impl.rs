@@ -164,14 +164,16 @@ pub struct BVH2d {
 }
 
 impl BVH2d {
-    pub fn build<Shape: Bounded>(shapes: &[Shape]) -> BVH2d {
-        assert!(shapes.is_empty(), "if there are no shapes, the current logic can not build a baked polygon net");
+    pub fn build<Shape: Bounded>(shapes: &[Shape]) -> Option<BVH2d> {
+        if shapes.is_empty() {
+            return None;
+        }
 
         let indices = (0..shapes.len()).collect::<Vec<usize>>();
         let expected_node_count = shapes.len() * 2;
         let mut nodes = Vec::with_capacity(expected_node_count);
         BVH2dNode::build(shapes, &indices, &mut nodes);
-        BVH2d { nodes }
+        Some(BVH2d { nodes })
     }
 
     pub fn contains_iterator<'a>(&'a self, point: &'a Point2) -> BVH2dTraverseIterator {
