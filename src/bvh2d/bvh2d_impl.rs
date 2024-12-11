@@ -40,6 +40,8 @@ impl BVH2dNode {
             )
         }
 
+        assert!(!indices.is_empty(), "if this function is given an empty list, it leads to an infinite recursion/stack overflow");
+
         // If there is only one element left, don't split anymore
         if indices.len() == 1 {
             let shape_index = indices[0];
@@ -162,12 +164,16 @@ pub struct BVH2d {
 }
 
 impl BVH2d {
-    pub fn build<Shape: Bounded>(shapes: &[Shape]) -> BVH2d {
+    pub fn build<Shape: Bounded>(shapes: &[Shape]) -> Option<BVH2d> {
+        if shapes.is_empty() {
+            return None;
+        }
+
         let indices = (0..shapes.len()).collect::<Vec<usize>>();
         let expected_node_count = shapes.len() * 2;
         let mut nodes = Vec::with_capacity(expected_node_count);
         BVH2dNode::build(shapes, &indices, &mut nodes);
-        BVH2d { nodes }
+        Some(BVH2d { nodes })
     }
 
     pub fn contains_iterator<'a>(&'a self, point: &'a Point2) -> BVH2dTraverseIterator {
