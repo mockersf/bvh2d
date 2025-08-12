@@ -170,7 +170,7 @@ impl BVH2d {
         BVH2d { nodes }
     }
 
-    pub fn contains_iterator<'a>(&'a self, point: &'a Point2) -> BVH2dTraverseIterator {
+    pub fn contains_iterator<'a>(&'a self, point: &'a Point2) -> BVH2dTraverseIterator<'a> {
         BVH2dTraverseIterator::new(self, point)
     }
 }
