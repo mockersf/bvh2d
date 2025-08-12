@@ -1,7 +1,7 @@
 [package]
 name = "bvh2d"
 description = "A fast BVH using SAH for 2d"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 readme = "README.md"
 repository = "https://github.com/mockersf/bvh2d"
