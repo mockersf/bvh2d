@@ -1,7 +1,7 @@
 use crate::Point2;
 use std::ops::Index;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Axis {
     X = 0,
     Y = 1,
